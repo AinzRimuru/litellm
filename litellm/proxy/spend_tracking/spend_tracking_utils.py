@@ -138,6 +138,19 @@ def _get_spend_logs_metadata(
     clean_metadata["litellm_overhead_time_ms"] = litellm_overhead_time_ms
     clean_metadata["cost_breakdown"] = cost_breakdown
 
+    # str(exception) for provider errors embeds the upstream response body, so
+    # error_message can leak content even when prompt/response storage is off.
+    if not _should_store_prompts_and_responses_in_spend_logs():
+        error_info = clean_metadata.get("error_information")
+        if (
+            isinstance(error_info, dict)
+            and error_info.get("error_message") is not None
+        ):
+            clean_metadata["error_information"] = {
+                **error_info,
+                "error_message": None,
+            }
+
     return clean_metadata
 
 

@@ -1519,3 +1519,66 @@ class TestIsMasterKey:
         master = "sk-master-key-123"
         hashed = hash_token(master)
         assert _is_master_key(api_key=hashed, _master_key=master) is True
+
+
+# error_message redaction in spend logs
+STORE_PROMPTS_PATH = (
+    "litellm.proxy.spend_tracking.spend_tracking_utils."
+    "_should_store_prompts_and_responses_in_spend_logs"
+)
+
+
+def _failure_metadata_with_error(error_msg):
+    return {
+        "user_api_key": "sk-test",
+        "status": "failure",
+        "error_information": {
+            "error_code": "400",
+            "error_class": "BadRequestError",
+            "llm_provider": "vertex_ai",
+            "traceback": "Traceback ...",
+            "error_message": error_msg,
+        },
+    }
+
+
+@patch(STORE_PROMPTS_PATH, return_value=False)
+def test_error_message_redacted_when_store_prompts_disabled(_mock_store):
+    raw = (
+        'litellm.BadRequestError: Received={"candidates": [{"content": '
+        '{"role": "model", "parts": [{"text": "secret content"}]}}]}'
+    )
+    result = _get_spend_logs_metadata(_failure_metadata_with_error(raw))
+    assert result["error_information"]["error_message"] is None
+
+
+@patch(STORE_PROMPTS_PATH, return_value=False)
+def test_empty_error_message_still_nulled_when_disabled(_mock_store):
+    # `is not None` guard — empty string is also redacted for clarity
+    result = _get_spend_logs_metadata(_failure_metadata_with_error(""))
+    assert result["error_information"]["error_message"] is None
+
+
+@patch(STORE_PROMPTS_PATH, return_value=True)
+def test_error_message_kept_when_store_prompts_enabled(_mock_store):
+    raw = 'litellm.BadRequestError: Received={"candidates": [{"content": {"role": "model"}}]}'
+    result = _get_spend_logs_metadata(_failure_metadata_with_error(raw))
+    assert result["error_information"]["error_message"] == raw
+
+
+@patch(STORE_PROMPTS_PATH, return_value=False)
+def test_other_error_fields_preserved_when_message_redacted(_mock_store):
+    result = _get_spend_logs_metadata(_failure_metadata_with_error("error with content"))
+    info = result["error_information"]
+    assert info["error_code"] == "400"
+    assert info["error_class"] == "BadRequestError"
+    assert info["llm_provider"] == "vertex_ai"
+    assert info["traceback"] == "Traceback ..."
+    assert info["error_message"] is None
+
+
+@patch(STORE_PROMPTS_PATH, return_value=False)
+def test_no_error_when_error_information_is_none(_mock_store):
+    metadata = {"user_api_key": "sk-test", "status": "success"}
+    result = _get_spend_logs_metadata(metadata)
+    assert result.get("error_information") is None
